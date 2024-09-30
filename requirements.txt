@@ -2,3 +2,7 @@ streamlit
 ollama
 langchain
 langchain_ollama
+pymongo
+langchain_mongodb
+langchain_community
+markdownify
