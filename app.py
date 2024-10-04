@@ -4,13 +4,15 @@ from operator import itemgetter
 import streamlit as st
 import ollama
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from pymongo import MongoClient
-from langchain_mongodb import MongoDBAtlasVectorSearch
+from langchain_mongodb import MongoDBChatMessageHistory, MongoDBAtlasVectorSearch
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.document_transformers import MarkdownifyTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
 
 SYSTEM_MESSAGE = """You're a helpful assistant. Answer all questions to the best of your ability. If you don't know the answer let the user know to find help in the internet.
 
@@ -52,17 +54,34 @@ prompt_template = ChatPromptTemplate.from_messages(
             "system",
             SYSTEM_MESSAGE,
         ),
+        MessagesPlaceholder("history"),
         ("human", "{input}"),
     ]
 )
 
 chain = {"context": itemgetter("input") | retriever, "input": itemgetter(
-    "input")} | prompt_template | chat | StrOutputParser()
+    "input"), "history": itemgetter(
+    "history")} | prompt_template | chat | StrOutputParser()
+
+
+def get_session_history() -> BaseChatMessageHistory:
+    return MongoDBChatMessageHistory(
+        MONGO_URI, "user", database_name="bot")
+
+history_chain = RunnableWithMessageHistory(
+    chain, get_session_history, input_messages_key="input", history_messages_key="history")
 
 st.title("Chatbot")
 st.caption("A Streamlit chatbot")
 
+history = get_session_history()
+if len(history.messages) == 0:
+    history.add_ai_message('Hello, how can I assist you today?')
+for msg in history.messages:
+    st.chat_message(msg.type).write(msg.content)
+
 if prompt := st.chat_input():
     st.chat_message("user").write(prompt)
     with st.chat_message("ai"):
-        st.write_stream(chain.stream({"input":prompt}))
+        with st.spinner("Thinking..."):
+            st.write_stream(history_chain.stream({"input": prompt}))
